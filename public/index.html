@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Redis & Snowflake Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { text-align: center; margin-bottom: 8px; color: #fff; }
+    .subtitle { text-align: center; color: #64748b; margin-bottom: 24px; font-size: 14px; }
+    .source-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .source-redis { background: #dc2626; color: #fff; }
+    .source-snowflake { background: #3b82f6; color: #fff; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+    .card h3 { font-size: 14px; color: #94a3b8; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .metric { font-size: 32px; font-weight: 700; color: #fff; }
+    .metric-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 12px; background: #334155; color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 11px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #334155; }
+    tr:hover { background: #334155; }
+    .btn { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #2563eb; }
+    .btn-secondary { background: #475569; }
+    .btn-secondary:hover { background: #64748b; }
+    .actions { display: flex; gap: 12px; justify-content: center; margin-bottom: 24px; }
+    .refresh-note { text-align: center; color: #64748b; font-size: 12px; margin-top: 24px; }
+    .chart-bar { height: 24px; background: #3b82f6; border-radius: 4px; margin: 4px 0; transition: width 0.3s ease; }
+    .chart-label { display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; }
+    .redis-key { background: #7c3aed; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Redis & Snowflake Demo</h1>
+    <p class="subtitle">Real-time caching with Redis + Analytics data from Snowflake</p>
+
+    <div class="actions">
+      <button class="btn" onclick="loadAllData()">Refresh All</button>
+      <button class="btn btn-secondary" onclick="incrementMetric('page_views')">Simulate Page View</button>
+      <button class="btn btn-secondary" onclick="incrementMetric('api_calls')">Simulate API Call</button>
+      <button class="btn btn-secondary" onclick="clearCache()">Clear Redis Cache</button>
+    </div>
+
+    <h3 style="margin-bottom: 12px; color: #94a3b8; font-size: 14px;">REAL-TIME METRICS (Redis)</h3>
+    <div class="grid" id="realtime-grid"></div>
+
+    <h3 style="margin-bottom: 12px; color: #94a3b8; font-size: 14px;">SALES BY REGION (Snowflake)</h3>
+    <div class="card">
+      <div class="table-container">
+        <table id="sales-table">
+          <thead><tr><th>Month</th><th>Region</th><th>Revenue</th><th>Units</th><th>Customers</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="refresh-note" id="sales-note"></p>
+    </div>
+
+    <h3 style="margin: 24px 0 12px; color: #94a3b8; font-size: 14px;">TOP PRODUCTS (Snowflake)</h3>
+    <div class="card">
+      <div class="table-container">
+        <table id="products-table">
+          <thead><tr><th>Product</th><th>Category</th><th>Region</th><th>Revenue</th><th>Units</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="refresh-note" id="products-note"></p>
+    </div>
+
+    <h3 style="margin: 24px 0 12px; color: #94a3b8; font-size: 14px;">INVENTORY STATUS (Snowflake)</h3>
+    <div class="card" id="inventory-grid"></div>
+    <p class="refresh-note" id="inventory-note"></p>
+
+    <p class="refresh-note">Data cached in Redis (5 min TTL). Click "Simulate" buttons to see Redis counters increment in real-time.</p>
+  </div>
+
+  <script>
+    async function loadAllData() {
+      await Promise.all([loadRealtime(), loadSales(), loadProducts(), loadInventory()]);
+    }
+
+    async function loadRealtime() {
+      const res = await fetch('/api/metrics/realtime');
+      const { data } = await res.json();
+      const grid = document.getElementById('realtime-grid');
+      grid.innerHTML = Object.entries(data).map(([key, value]) => `
+        <div class="card">
+          <h3><span class="redis-key">metrics:${key}</span> <span class="source-badge source-redis">Redis</span></h3>
+          <div class="metric">${value.toLocaleString()}</div>
+          <div class="metric-label">${key.replace(/_/g, ' ')}</div>
+        </div>
+      `).join('');
+    }
+
+    async function loadSales() {
+      const res = await fetch('/api/metrics/sales');
+      const { data, source } = await res.json();
+      const tbody = document.querySelector('#sales-table tbody');
+      tbody.innerHTML = data.map(row => `
+        <tr>
+          <td>${new Date(row.MONTH).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</td>
+          <td>${row.REGION}</td>
+          <td>$${row.REVENUE.toLocaleString()}</td>
+          <td>${row.UNITS.toLocaleString()}</td>
+          <td>${row.CUSTOMERS.toLocaleString()}</td>
+        </tr>
+      `).join('');
+      document.getElementById('sales-note').textContent = `Source: ${source.toUpperCase()} - Cached for 5 minutes`;
+    }
+
+    async function loadProducts() {
+      const res = await fetch('/api/products/top');
+      const { data, source } = await res.json();
+      const tbody = document.querySelector('#products-table tbody');
+      tbody.innerHTML = data.map(row => `
+        <tr>
+          <td>${row.PRODUCT_NAME}</td>
+          <td>${row.CATEGORY}</td>
+          <td>${row.REGION}</td>
+          <td>$${row.REVENUE.toLocaleString()}</td>
+          <td>${row.UNITS_SOLD.toLocaleString()}</td>
+        </tr>
+      `).join('');
+      document.getElementById('products-note').textContent = `Source: ${source.toUpperCase()} - Cached for 10 minutes`;
+    }
+
+    async function loadInventory() {
+      const res = await fetch('/api/inventory');
+      const { data, source } = await res.json();
+      const grid = document.getElementById('inventory-grid');
+      grid.innerHTML = data.map(item => `
+        <div style="background:#334155;padding:16px;border-radius:8px;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+            <strong>${item.category}</strong>
+            <span style="color:#64748b;">${item.inStock} in stock</span>
+          </div>
+          <div class="chart-label"><span>Low: ${item.lowStock}</span><span>Out: ${item.outOfStock}</span></div>
+          <div class="chart-bar" style="width:${Math.min(100, (item.inStock/600)*100)}%"></div>
+        </div>
+      `).join('');
+      document.getElementById('inventory-note').textContent = `Source: ${source.toUpperCase()} - Cached for 3 minutes`;
+    }
+
+    async function incrementMetric(metric) {
+      await fetch(`/api/metrics/increment/${metric}`, { method: 'POST' });
+      await loadRealtime();
+    }
+
+    async function clearCache() {
+      await fetch('/api/cache/clear', { method: 'POST' });
+      alert('Redis cache cleared. Next fetch will hit Snowflake.');
+      await loadAllData();
+    }
+
+    loadAllData();
+    setInterval(loadRealtime, 5000);
+  </script>
+</body>
+</html>
